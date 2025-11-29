@@ -21,6 +21,8 @@ runs:
     
     - name: Process alog files
       shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         mkdir -p renders
         
@@ -42,23 +44,14 @@ runs:
             echo "Processing $alog..."
             
             # Extract batch number
-            batch_name=$(python -c "
-import ast
-try:
-    data = ast.literal_eval(open('$alog').read())
-    prefix = data.get('roastbatchprefix', '#')
-    number = data.get('roastbatchnr', 0)
-    print(f'{prefix}{number}')
-except:
-    print('unknown')
-")
+            batch_name=$(python3 -c "import ast; data = ast.literal_eval(open('$alog').read()); print(f\"{data.get('roastbatchprefix', '#')}{data.get('roastbatchnr', 0)}\")" 2>/dev/null || echo "unknown")
             
             # Render profile
-            python ${{ github.action_path }}/alog_renderer.py "$alog" -o "renders/${batch_name}.png"
+            python3 "${ACTION_PATH}/alog_renderer.py" "$alog" -o "renders/${batch_name}.png"
             
             # Update roast log if it exists
             if [ -f "ROASTS.md" ]; then
-              python ${{ github.action_path }}/update_roast_log.py "$alog" "renders/${batch_name}.png"
+              python3 "${ACTION_PATH}/update_roast_log.py" "$alog" "renders/${batch_name}.png"
             fi
             
             echo "✓ Processed: $batch_name"
