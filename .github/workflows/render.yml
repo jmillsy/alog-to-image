@@ -1,0 +1,96 @@
+name: Render ALOG Files
+
+on:
+  push:
+    paths:
+      - '**.alog'
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for proper commits
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Process new alog files
+        run: |
+          mkdir -p renders
+          
+          # Get list of changed .alog files in this push
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger: process all alog files
+            changed_alogs=$(find . -name "*.alog" -type f)
+          else
+            # Push trigger: process only changed files
+            changed_alogs=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '\.alog$' || true)
+          fi
+          
+          if [ -z "$changed_alogs" ]; then
+            echo "No alog files to process"
+            exit 0
+          fi
+          
+          echo "$changed_alogs" | while read alog; do
+            if [ -f "$alog" ]; then
+              echo "Processing $alog..."
+              
+              # Extract batch number for naming
+              batch_name=$(python -c "
+import ast
+import sys
+try:
+    data = ast.literal_eval(open('$alog').read())
+    prefix = data.get('roastbatchprefix', '#')
+    number = data.get('roastbatchnr', 0)
+    print(f'{prefix}{number}')
+except:
+    print('unknown')
+" 2>/dev/null)
+              
+              # Render the profile
+              output_png="renders/${batch_name}.png"
+              python alog_renderer.py "$alog" -o "$output_png"
+              
+              # Update the roast log
+              python update_roast_log.py "$alog" "$output_png"
+              
+              echo "Processed roast: $batch_name"
+            fi
+          done
+      
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Add rendered images and updated log
+          git add renders/*.png ROASTS.md
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Add roast profile renders and update roast log [skip ci]"
+            git push
+          fi
+      
+      - name: Upload rendered images as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-profiles
+          path: renders/*.png
+          retention-days: 90
