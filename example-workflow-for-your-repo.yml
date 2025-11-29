@@ -1,0 +1,30 @@
+name: Render ALOG Files
+
+on:
+  push:
+    paths:
+      - '**.alog'
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Render alog files
+        uses: jmillsy/alog-to-image@v1
+      
+      - name: Upload rendered images
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-profiles
+          path: renders/*.png
+          retention-days: 90
+        if: always()
