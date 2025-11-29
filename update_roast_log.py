@@ -115,7 +115,7 @@ def parse_table_row(line):
         return None
 
 
-def update_roast_log(log_path, metadata, render_path):
+def update_roast_log(log_path, metadata, render_path, repo_url=None):
     """Update the roast log markdown file with new entry."""
     log_file = Path(log_path)
     
@@ -157,13 +157,24 @@ def update_roast_log(log_path, metadata, render_path):
         print(f"Roast {metadata['roast_name']} already exists in log, skipping...")
         return False
     
+    # Create image URL with proper encoding
+    if repo_url:
+        # Use raw GitHub content URL with URL encoding
+        import urllib.parse
+        encoded_path = urllib.parse.quote(render_path)
+        image_url = f"{repo_url}/{encoded_path}"
+    else:
+        # Fallback to relative path with URL encoding
+        import urllib.parse
+        image_url = urllib.parse.quote(render_path)
+    
     # Create new entry row
     new_row = (
         f"| {metadata['roast_name']} "
         f"| {metadata['roast_date']} "
         f"| {metadata['total_time_min']:.1f} min "
         f"| {metadata['development_pct']:.1f}% "
-        f"| ![Profile]({render_path}) |\n"
+        f"| ![Profile]({image_url}) |\n"
     )
     
     # Add new entry to list
@@ -221,6 +232,12 @@ def main():
         default='roasts.md',
         help='Path to the roast log markdown file (default: roasts.md)'
     )
+    parser.add_argument(
+        '--repo-url',
+        type=str,
+        default=None,
+        help='Base URL for raw GitHub content (e.g., https://raw.githubusercontent.com/user/repo/refs/heads/main)'
+    )
     
     args = parser.parse_args()
     
@@ -233,7 +250,7 @@ def main():
     print(f"Extracted metadata for roast {metadata['roast_name']}")
     
     # Update log
-    updated = update_roast_log(args.log, metadata, args.render_path)
+    updated = update_roast_log(args.log, metadata, args.render_path, args.repo_url)
     
     if updated:
         print(f"Successfully updated {args.log}")

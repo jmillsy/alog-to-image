@@ -51,7 +51,9 @@ runs:
             
             # Update roast log if it exists
             if [ -f "roasts.md" ]; then
-              python3 "${ACTION_PATH}/update_roast_log.py" "$alog" "renders/${batch_name}.png"
+              # Build raw GitHub content URL
+              REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/${{ github.ref_name }}"
+              python3 "${ACTION_PATH}/update_roast_log.py" "$alog" "renders/${batch_name}.png" --repo-url "$REPO_URL"
             fi
             
             echo "✓ Processed: $batch_name"
