@@ -218,8 +218,8 @@ def main():
     parser.add_argument(
         '--log',
         type=str,
-        default='ROASTS.md',
-        help='Path to the roast log markdown file (default: ROASTS.md)'
+        default='roasts.md',
+        help='Path to the roast log markdown file (default: roasts.md)'
     )
     
     args = parser.parse_args()

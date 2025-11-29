@@ -50,7 +50,7 @@ runs:
             python3 "${ACTION_PATH}/alog_renderer.py" "$alog" -o "renders/${batch_name}.png"
             
             # Update roast log if it exists
-            if [ -f "ROASTS.md" ]; then
+            if [ -f "roasts.md" ]; then
               python3 "${ACTION_PATH}/update_roast_log.py" "$alog" "renders/${batch_name}.png"
             fi
             
@@ -61,14 +61,26 @@ runs:
     - name: Commit changes
       shell: bash
       run: |
+        echo "Configuring git..."
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         
-        git add renders/*.png ROASTS.md 2>/dev/null || true
+        echo "Checking for files to commit..."
+        ls -la renders/ 2>/dev/null || echo "No renders directory"
+        ls -la roasts.md 2>/dev/null || echo "No roasts.md file"
+        
+        echo "Adding files to git..."
+        git add renders/ roasts.md 2>&1 || echo "Note: Some files may not exist yet"
+        
+        echo "Checking git status..."
+        git status
         
         if ! git diff --staged --quiet; then
+          echo "Committing changes..."
           git commit -m "Add roast profile renders and update roast log [skip ci]"
+          echo "Pushing to repository..."
           git push
+          echo "✓ Successfully committed and pushed changes"
         else
-          echo "No changes to commit"
+          echo "⚠ No changes to commit - this might indicate an issue"
         fi
