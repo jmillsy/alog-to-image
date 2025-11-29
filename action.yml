@@ -6,12 +6,6 @@ branding:
   icon: 'coffee'
   color: 'orange'
 
-inputs:
-  github-token:
-    description: 'GitHub token for committing changes'
-    required: false
-    default: ${{ github.token }}
-
 runs:
   using: 'composite'
   steps:
