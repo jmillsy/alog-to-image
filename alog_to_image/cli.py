@@ -57,7 +57,7 @@ def main():
         data = parse_alog(input_path)
         
         print(f"Rendering to: {output_path}")
-        render_alog(data, output_path, dpi=args.dpi)
+        render_alog(data, output_path, dpi=args.dpi, source_filename=input_path.name)
         print(f"Rendered image saved to: {output_path}")
         
     except ValueError as e:

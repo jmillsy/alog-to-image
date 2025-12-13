@@ -74,7 +74,7 @@ def calculate_ror(times, temps, window=30):
     return ror
 
 
-def render_alog(data, output_path, dpi=150):
+def render_alog(data, output_path, dpi=150, source_filename=None):
     """
     Render the alog data to a PNG image.
     
@@ -82,6 +82,7 @@ def render_alog(data, output_path, dpi=150):
         data: Dictionary containing parsed alog data
         output_path: Path where PNG should be saved
         dpi: DPI for output image (default 150)
+        source_filename: Optional filename to display on the image
         
     Raises:
         ValueError: If no valid temperature data found
@@ -91,9 +92,12 @@ def render_alog(data, output_path, dpi=150):
     temp1 = data.get('temp1', [])
     temp2 = data.get('temp2', [])
     
+    # Get DROP time but DON'T truncate yet - do it after valid data filtering
+    computed = data.get('computed', {})
+    drop_time = computed.get('DROP_time', 0)
+    
     # Detect which temp is BT vs ET based on computed data
     # BT typically drops when beans are charged, ET stays higher
-    computed = data.get('computed', {})
     charge_bt = computed.get('CHARGE_BT')
     charge_et = computed.get('CHARGE_ET')
     
@@ -148,6 +152,26 @@ def render_alog(data, output_path, dpi=150):
     # Unpack valid data
     times, bt_temps, et_temps = zip(*valid_data)
     
+    # NOW apply DROP cutoff AFTER filtering valid data
+    drop_idx = len(times)
+    if drop_time > 0:
+        for i, t in enumerate(times):
+            if t >= drop_time:
+                drop_idx = i + 1
+                break
+    
+    # Truncate to DROP
+    times = times[:drop_idx]
+    bt_temps = bt_temps[:drop_idx]
+    et_temps = et_temps[:drop_idx]
+    
+    # Also truncate timex for later use
+    timex = timex[:drop_idx]
+    
+    # Extract exhaust and ambient temps AFTER determining drop_idx
+    extratemp1 = data.get('extratemp1', [[]])[0][:drop_idx] if data.get('extratemp1') else []
+    extratemp2 = data.get('extratemp2', [[]])[0][:drop_idx] if data.get('extratemp2') else []
+    
     # Convert times to minutes for display
     times_min = [t / 60 for t in times]
     
@@ -176,8 +200,9 @@ def render_alog(data, output_path, dpi=150):
     roaster = data.get('roastertype', '')
     weight_in = data.get('weight', [0, 0, 'g'])[0]
     weight_out = data.get('weight', [0, 0, 'g'])[1]
+    total_time = computed.get('totaltime', 0)
     
-    # Extract phases (DRY, FCs, FCe, DROP)
+    # Extract phases
     phases = data.get('phases', [])
     timeindex = data.get('timeindex', [])
     
@@ -185,25 +210,90 @@ def render_alog(data, output_path, dpi=150):
     specialevents = data.get('specialevents', [])  # Indices into timex
     specialevents_strings = data.get('specialeventsStrings', [])
     
-    # Create figure with subplots
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+    # Create figure with subplots (14x11 inches for extra space)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 11), sharex=True)
     fig.suptitle(f'{roast_title} - {roast_date}', fontsize=16, fontweight='bold')
+    
+    # Add filename in top-left corner if provided
+    if source_filename:
+        fig.text(0.01, 0.99, f'File: {source_filename}', 
+                ha='left', va='top', fontsize=8, 
+                style='italic', color='gray',
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
+                         edgecolor='lightgray', alpha=0.7))
     
     # Plot 1: Temperature curves
     ax1.plot(times_min, bt_temps, 'b-', linewidth=2, label='BT (Bean Temp)')
     ax1.plot(times_min, et_temps, 'r-', linewidth=2, label='ET (Env Temp)')
     
+    # Add exhaust temp if available
+    if extratemp1 and any(t > 0 for t in extratemp1):
+        exhaust_times = [times_min[i] for i in range(min(len(times_min), len(extratemp1))) if extratemp1[i] > 0]
+        exhaust_temps = [t for t in extratemp1 if t > 0]
+        if exhaust_times:
+            ax1.plot(exhaust_times, exhaust_temps, 'm-', linewidth=1.5, alpha=0.6, label='Exhaust Temp')
+    
     ax1.set_ylabel('Temperature (°F)', fontsize=12)
     ax1.set_title('Temperature Profile', fontsize=14)
     ax1.grid(True, alpha=0.3)
     
-    # Add CHARGE marker with temperature annotation
+    # Add phase bars at top of temperature plot
+    dry_end_time = computed.get('DRY_time', 0)
+    fcs_time = computed.get('FCs_time', 0)
+    
+    phase_percentages = computed.get('phase_percentages', {})
+    drying_pct = phase_percentages.get('drying', 0)
+    maillard_pct = phase_percentages.get('maillard', 0)
+    dev_pct = phase_percentages.get('development', 0)
+    
+    # Get current y-axis limits and extend upper limit for phase bars
+    y_min, y_max = ax1.get_ylim()
+    phase_bar_height = (y_max - y_min) * 0.05  # 5% of plot height
+    
+    # Extend y-axis to make room for phase bars at top
+    ax1.set_ylim(y_min, y_max + phase_bar_height * 1.5)
+    y_min, y_max = ax1.get_ylim()  # Get updated limits
+    
+    phase_bar_y = y_max - phase_bar_height * 0.7  # Position near top
+    
+    dry_end_min = dry_end_time / 60 if dry_end_time > 0 else 0
+    fcs_min = fcs_time / 60 if fcs_time > 0 else 0
+    drop_min = drop_time / 60 if drop_time > 0 else times_min[-1]
+    
+    if dry_end_min > 0:
+        drying_width = dry_end_min
+        ax1.barh(phase_bar_y, drying_width, height=phase_bar_height, 
+                left=0, color='orange', alpha=0.3, edgecolor='orange', linewidth=1.5, zorder=10)
+        if drying_pct > 0:
+            ax1.text(drying_width / 2, phase_bar_y, f'Drying\n{drying_pct:.1f}%', 
+                    ha='center', va='center', fontsize=9, fontweight='bold', 
+                    color='darkorange', zorder=11)
+    
+    if fcs_min > dry_end_min > 0:
+        maillard_width = fcs_min - dry_end_min
+        ax1.barh(phase_bar_y, maillard_width, height=phase_bar_height, 
+                left=dry_end_min, color='brown', alpha=0.3, edgecolor='brown', linewidth=1.5, zorder=10)
+        if maillard_pct > 0:
+            ax1.text(dry_end_min + maillard_width / 2, phase_bar_y, f'Maillard\n{maillard_pct:.1f}%', 
+                    ha='center', va='center', fontsize=9, fontweight='bold', 
+                    color='saddlebrown', zorder=11)
+    
+    if drop_min > fcs_min > 0:
+        dev_width = drop_min - fcs_min
+        ax1.barh(phase_bar_y, dev_width, height=phase_bar_height, 
+                left=fcs_min, color='green', alpha=0.3, edgecolor='green', linewidth=1.5, zorder=10)
+        if dev_pct > 0:
+            ax1.text(fcs_min + dev_width / 2, phase_bar_y, f'Development\n{dev_pct:.1f}%', 
+                    ha='center', va='center', fontsize=9, fontweight='bold', 
+                    color='darkgreen', zorder=11)
+    
+    # Add event markers WITHOUT labels (labels go on x-axis between plots)
     charge_bt = computed.get('CHARGE_BT', 0)
     if timeindex and len(timeindex) > 0 and timeindex[0] > 0:
         charge_idx = timeindex[0]
         if charge_idx < len(times_min):
             ax1.axvline(x=times_min[charge_idx], color='brown', linestyle=':', 
-                       linewidth=2, alpha=0.8, label='CHARGE')
+                       linewidth=2, alpha=0.8)
             if charge_bt > 0:
                 ax1.annotate(f'{charge_bt:.1f}°F', 
                            xy=(times_min[charge_idx], charge_bt),
@@ -212,20 +302,25 @@ def render_alog(data, output_path, dpi=150):
                            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                    edgecolor='brown', alpha=0.7))
     
-    # Add Turning Point marker with temperature annotation
+    tp_time = computed.get('TP_time', 0)
+    tp_idx = 0
     tp_bt = computed.get('TP_BT', 0)
-    if tp_time > 0 and tp_idx < len(times_min):
-        ax1.axvline(x=times_min[tp_idx], color='gray', linestyle=':', 
-                   linewidth=2, alpha=0.6, label='TP')
-        if tp_bt > 0:
-            ax1.annotate(f'{tp_bt:.1f}°F', 
-                       xy=(times_min[tp_idx], tp_bt),
-                       xytext=(5, 5), textcoords='offset points',
-                       fontsize=9, color='gray', fontweight='bold',
-                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
-                               edgecolor='gray', alpha=0.7))
+    if tp_time > 0:
+        for i, t in enumerate(times):
+            if t >= tp_time:
+                tp_idx = i
+                break
+        if tp_idx < len(times_min):
+            ax1.axvline(x=times_min[tp_idx], color='gray', linestyle=':', 
+                       linewidth=2, alpha=0.6)
+            if tp_bt > 0:
+                ax1.annotate(f'{tp_bt:.1f}°F', 
+                           xy=(times_min[tp_idx], tp_bt),
+                           xytext=(5, 5), textcoords='offset points',
+                           fontsize=9, color='gray', fontweight='bold',
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                   edgecolor='gray', alpha=0.7))
     
-    # Add phase markers using computed times with temperature annotations
     phase_events = [
         ('DRY_time', 'DRY_END_BT', 'DRY END', 'orange'),
         ('FCs_time', 'FCs_BT', 'FCs', 'green'),
@@ -238,10 +333,9 @@ def render_alog(data, output_path, dpi=150):
         event_temp = computed.get(temp_key, 0)
         if event_time > 0:
             event_time_min = event_time / 60
-            # Find closest time index
             if event_time_min <= times_min[-1]:
                 ax1.axvline(x=event_time_min, color=color, linestyle='--', 
-                           linewidth=1.5, alpha=0.7, label=name)
+                           linewidth=1.5, alpha=0.7)
                 if event_temp > 0:
                     ax1.annotate(f'{event_temp:.1f}°F', 
                                xy=(event_time_min, event_temp),
@@ -250,21 +344,8 @@ def render_alog(data, output_path, dpi=150):
                                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                        edgecolor=color, alpha=0.7))
     
-    # Add special events to temperature plot
-    if specialevents and specialevents_strings:
-        for i, event_idx in enumerate(specialevents):
-            if 0 <= event_idx < len(times_min) and i < len(specialevents_strings):
-                event_label = specialevents_strings[i]
-                if event_label and event_label.strip():  # Only show if there's a label
-                    # Add small annotation
-                    ax1.annotate(event_label, 
-                               xy=(times_min[event_idx], ax1.get_ylim()[1] * 0.95),
-                               xytext=(0, -5), textcoords='offset points',
-                               ha='center', fontsize=8, color='blue',
-                               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', 
-                                       edgecolor='blue', alpha=0.3))
-    
-    ax1.legend(loc='upper left', fontsize=9, ncol=2)
+    # Move legend outside plot area
+    ax1.legend(loc='upper left', bbox_to_anchor=(0, 1.12), ncol=4, fontsize=9, frameon=False)
     
     # Plot 2: Rate of Rise (RoR)
     ax2.plot(times_min, bt_ror_filtered, 'g-', linewidth=2, label='BT RoR')
@@ -274,15 +355,13 @@ def render_alog(data, output_path, dpi=150):
     ax2.set_ylabel('Rate of Rise (°F/min)', fontsize=12)
     ax2.set_title('Rate of Rise', fontsize=14)
     ax2.grid(True, alpha=0.3)
-    ax2.legend(loc='upper right', fontsize=10)
     
-    # Set Y-axis minimum to 0 to better show the gradual decline
-    # Calculate max RoR for upper bound with some padding
+    # Set Y-axis minimum to 0
     max_ror = max(bt_ror_filtered) if bt_ror_filtered else 10
     ax2.set_ylim(bottom=0, top=max_ror * 1.1)
     
     # Find and mark peak RoR
-    if bt_ror_filtered:
+    if bt_ror_filtered and max_ror > 0:
         peak_ror_idx = bt_ror_filtered.index(max_ror)
         peak_ror_time = times_min[peak_ror_idx]
         ax2.plot(peak_ror_time, max_ror, 'r*', markersize=15, zorder=5)
@@ -317,66 +396,152 @@ def render_alog(data, output_path, dpi=150):
                                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                        edgecolor=color, alpha=0.7))
     
-    # Add special events to RoR plot
-    if specialevents and specialevents_strings:
-        for i, event_idx in enumerate(specialevents):
-            if 0 <= event_idx < len(times_min) and i < len(specialevents_strings):
-                event_label = specialevents_strings[i]
-                if event_label and event_label.strip():
-                    ax2.axvline(x=times_min[event_idx], color='blue', linestyle=':', 
-                               linewidth=1, alpha=0.4)
+    # Move legend outside plot area
+    ax2.legend(loc='upper right', bbox_to_anchor=(1, 1.05), fontsize=9, frameon=False)
     
-    # Calculate development percentage
-    fcs_time = computed.get('FCs_time', 0)
-    drop_time = computed.get('DROP_time', 0)
-    total_time = computed.get('totaltime', 0)
-    development_pct = 0
+    # Add event labels on x-axis BETWEEN the two plots
+    event_labels = []
+    if timeindex and len(timeindex) > 0 and timeindex[0] > 0:
+        charge_idx = timeindex[0]
+        if charge_idx < len(times_min):
+            event_labels.append((times_min[charge_idx], 'CHARGE', 'brown'))
     
-    if fcs_time > 0 and drop_time > 0 and total_time > 0:
-        development_time = drop_time - fcs_time
-        development_pct = (development_time / total_time) * 100
+    if tp_time > 0 and tp_idx < len(times_min):
+        event_labels.append((times_min[tp_idx], 'TP', 'gray'))
     
-    # Add metadata text box
-    metadata_text = []
+    for event_key, temp_key, name, color in phase_events:
+        event_time = computed.get(event_key, 0)
+        if event_time > 0:
+            event_time_min = event_time / 60
+            if event_time_min <= times_min[-1]:
+                event_labels.append((event_time_min, name, color))
+    
+    # Position labels between the plots (just below ax1, above ax2)
+    ax1_bottom = ax1.get_position().y0
+    for event_time, label, color in event_labels:
+        fig.text((event_time / times_min[-1]) * 0.88 + 0.09, ax1_bottom - 0.02, label,
+                ha='center', va='top', fontsize=9, fontweight='bold',
+                color=color, bbox=dict(boxstyle='round,pad=0.3', 
+                facecolor='white', edgecolor=color, alpha=0.8))
+    
+    # Extract gas changes and build Roast Details section
+    specialevents = data.get('specialevents', [])
+    specialeventsStrings = data.get('specialeventsStrings', [])
+    specialeventsvalue = data.get('specialeventsvalue', [])
+    
+    # Get charge time for relative time calculations
+    charge_time = 0
+    if timeindex and len(timeindex) > 0 and timeindex[0] > 0:
+        charge_idx = timeindex[0]
+        if charge_idx < len(timex):
+            charge_time = timex[charge_idx]
+    
+    # Infer charge gas from specialeventsvalue[0]
+    charge_gas = "Unknown"
+    if specialeventsvalue and len(specialeventsvalue) > 0:
+        gas_value = specialeventsvalue[0]
+        if gas_value < 1.3:
+            charge_gas = "5"
+        elif gas_value < 1.8:
+            charge_gas = "10"
+        elif gas_value < 2.3:
+            charge_gas = "15"
+        elif gas_value < 2.8:
+            charge_gas = "20"
+        elif gas_value < 3.3:
+            charge_gas = "25"
+        elif gas_value < 3.8:
+            charge_gas = "30"
+        else:
+            charge_gas = "35+"
+    
+    # Build chronological timeline of events
+    timeline_events = []
+    
+    # Add charge event with gas and temperature
+    if charge_time > 0:
+        charge_bt_temp = computed.get('CHARGE_BT', 0)
+        if charge_bt_temp > 0:
+            timeline_events.append((0, f"CHARGE (Gas: {charge_gas}mbar, BT: {charge_bt_temp:.1f}°F)"))
+        else:
+            timeline_events.append((0, f"CHARGE (Gas: {charge_gas}mbar)"))
+    
+    # Add roast phase events with temperatures
+    event_times = [
+        ('TP_time', 'TP', 'TP_BT'),
+        ('DRY_time', 'DRY END', 'DRY_END_BT'),
+        ('FCs_time', 'FCs', 'FCs_BT'),
+        ('FCe_time', 'FCe', 'FCe_BT'),
+        ('DROP_time', 'DROP', 'DROP_BT')
+    ]
+    
+    for event_key, event_name, temp_key in event_times:
+        event_time = computed.get(event_key, 0)
+        if event_time > 0:
+            rel_time = event_time - charge_time
+            event_temp = computed.get(temp_key, 0)
+            if event_temp > 0:
+                timeline_events.append((rel_time, f"{event_name} (BT: {event_temp:.1f}°F)"))
+            else:
+                timeline_events.append((rel_time, event_name))
+    
+    # Add gas changes
+    for i, event_idx in enumerate(specialevents):
+        if event_idx < len(timex) and i < len(specialeventsStrings):
+            gas_label = specialeventsStrings[i]
+            if gas_label and gas_label.strip():
+                event_time = timex[event_idx]
+                rel_time = event_time - charge_time
+                timeline_events.append((rel_time, f"Gas → {gas_label}mbar"))
+    
+    # Sort chronologically
+    timeline_events.sort(key=lambda x: x[0])
+    
+    # Build Roast Details text
+    roast_details = []
+    
+    # Add metadata section
     if beans:
-        metadata_text.append(f'Beans: {beans}')
+        roast_details.append(f'Beans: {beans}')
     if roaster:
-        metadata_text.append(f'Roaster: {roaster}')
+        roast_details.append(f'Roaster: {roaster}')
     if weight_in > 0:
-        metadata_text.append(f'Weight: {weight_in}g → {weight_out}g')
+        roast_details.append(f'Weight: {weight_in}g → {weight_out}g')
         if weight_out > 0:
             loss_pct = ((weight_in - weight_out) / weight_in) * 100
-            metadata_text.append(f'Loss: {loss_pct:.1f}%')
+            roast_details.append(f'Loss: {loss_pct:.1f}%')
     if total_time > 0:
-        metadata_text.append(f'Total Time: {total_time/60:.1f} min')
-    if development_pct > 0:
-        metadata_text.append(f'Development: {development_pct:.1f}%')
+        roast_details.append(f'Total Time: {total_time/60:.1f} min')
     
-    # Add phase durations and percentages
+    # Add phase durations
     phase_durations = computed.get('phase_durations_s', {})
-    phase_percentages = computed.get('phase_percentages', {})
-    
     drying_duration = phase_durations.get('drying', 0)
     maillard_duration = phase_durations.get('maillard', 0)
     dev_duration = phase_durations.get('development', 0)
     
-    drying_pct = phase_percentages.get('drying', 0)
-    maillard_pct = phase_percentages.get('maillard', 0)
-    dev_pct = phase_percentages.get('development', 0)
-    
     if drying_duration > 0:
-        metadata_text.append(f'Drying: {drying_duration}s ({drying_pct:.1f}%)')
+        roast_details.append(f'Drying: {drying_duration}s ({drying_pct:.1f}%)')
     if maillard_duration > 0:
-        metadata_text.append(f'Maillard: {maillard_duration}s ({maillard_pct:.1f}%)')
+        roast_details.append(f'Maillard: {maillard_duration}s ({maillard_pct:.1f}%)')
     if dev_duration > 0:
-        metadata_text.append(f'Dev: {dev_duration}s ({dev_pct:.1f}%)')
+        roast_details.append(f'Development: {dev_duration}s ({dev_pct:.1f}%)')
     
-    if metadata_text:
-        fig.text(0.99, 0.01, '\n'.join(metadata_text), 
-                ha='right', va='bottom', fontsize=9, 
+    # Add separator and timeline
+    if timeline_events:
+        roast_details.append('')  # Blank line
+        roast_details.append('Timeline:')
+        for rel_time, event_desc in timeline_events:
+            time_str = f"{int(rel_time // 60)}:{int(rel_time % 60):02d}"
+            roast_details.append(f"  {time_str} - {event_desc}")
+    
+    # Display single Roast Details box, left-aligned with plot
+    if roast_details:
+        ax2_left = ax2.get_position().x0
+        fig.text(ax2_left, 0.01, '\n'.join(roast_details), 
+                ha='left', va='bottom', fontsize=8, family='monospace',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
     
-    # Adjust layout and save
-    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+    # Adjust layout and save (increase bottom margin for text box)
+    plt.tight_layout(rect=[0, 0.20, 1, 0.96])
     plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
     plt.close()

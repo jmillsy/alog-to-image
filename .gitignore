@@ -30,6 +30,7 @@ venv/
 # Output
 output/
 renders/
+*.png
 
 # Keep example output
 !example/output.png
