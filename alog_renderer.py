@@ -198,48 +198,58 @@ def render_alog(data, output_path, dpi=150):
     ax1.set_title('Temperature Profile', fontsize=14)
     ax1.grid(True, alpha=0.3)
     
-    # Add CHARGE marker
+    # Add CHARGE marker with temperature annotation
+    charge_bt = computed.get('CHARGE_BT', 0)
     if timeindex and len(timeindex) > 0 and timeindex[0] > 0:
         charge_idx = timeindex[0]
         if charge_idx < len(times_min):
             ax1.axvline(x=times_min[charge_idx], color='brown', linestyle=':', 
                        linewidth=2, alpha=0.8, label='CHARGE')
+            if charge_bt > 0:
+                ax1.annotate(f'{charge_bt:.1f}°F', 
+                           xy=(times_min[charge_idx], charge_bt),
+                           xytext=(5, 5), textcoords='offset points',
+                           fontsize=9, color='brown', fontweight='bold',
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                   edgecolor='brown', alpha=0.7))
     
-    # Add Turning Point marker
+    # Add Turning Point marker with temperature annotation
+    tp_bt = computed.get('TP_BT', 0)
     if tp_time > 0 and tp_idx < len(times_min):
         ax1.axvline(x=times_min[tp_idx], color='gray', linestyle=':', 
                    linewidth=2, alpha=0.6, label='TP')
+        if tp_bt > 0:
+            ax1.annotate(f'{tp_bt:.1f}°F', 
+                       xy=(times_min[tp_idx], tp_bt),
+                       xytext=(5, 5), textcoords='offset points',
+                       fontsize=9, color='gray', fontweight='bold',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                               edgecolor='gray', alpha=0.7))
     
-    # Add phase markers using computed times (more accurate than timeindex)
+    # Add phase markers using computed times with temperature annotations
     phase_events = [
-        ('DRY_time', 'DRY END', 'orange'),
-        ('FCs_time', 'FCs', 'green'),
-        ('FCe_time', 'FCe', 'purple'),
-        ('DROP_time', 'DROP', 'red')
+        ('DRY_time', 'DRY_END_BT', 'DRY END', 'orange'),
+        ('FCs_time', 'FCs_BT', 'FCs', 'green'),
+        ('FCe_time', 'FCe_BT', 'FCe', 'purple'),
+        ('DROP_time', 'DROP_BT', 'DROP', 'red')
     ]
     
-    for event_key, name, color in phase_events:
+    for event_key, temp_key, name, color in phase_events:
         event_time = computed.get(event_key, 0)
+        event_temp = computed.get(temp_key, 0)
         if event_time > 0:
             event_time_min = event_time / 60
             # Find closest time index
             if event_time_min <= times_min[-1]:
                 ax1.axvline(x=event_time_min, color=color, linestyle='--', 
                            linewidth=1.5, alpha=0.7, label=name)
-    
-    # Add special events (gas changes, etc.)
-    if specialevents and specialevents_strings:
-        for i, event_idx in enumerate(specialevents):
-            if 0 <= event_idx < len(times_min) and i < len(specialevents_strings):
-                event_label = specialevents_strings[i]
-                if event_label and event_label.strip():  # Only show if there's a label
-                    # Add small annotation
-                    ax1.annotate(event_label, 
-                               xy=(times_min[event_idx], ax1.get_ylim()[1] * 0.95),
-                               xytext=(0, -5), textcoords='offset points',
-                               ha='center', fontsize=8, color='blue',
-                               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', 
-                                       edgecolor='blue', alpha=0.3))
+                if event_temp > 0:
+                    ax1.annotate(f'{event_temp:.1f}°F', 
+                               xy=(event_time_min, event_temp),
+                               xytext=(5, -15), textcoords='offset points',
+                               fontsize=9, color=color, fontweight='bold',
+                               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                       edgecolor=color, alpha=0.7))
     
     ax1.legend(loc='upper left', fontsize=9, ncol=2)
     
@@ -258,14 +268,41 @@ def render_alog(data, output_path, dpi=150):
     max_ror = max(bt_ror_filtered) if bt_ror_filtered else 10
     ax2.set_ylim(bottom=0, top=max_ror * 1.1)
     
-    # Add phase markers to RoR plot
-    for event_key, name, color in phase_events:
+    # Find and mark peak RoR
+    if bt_ror_filtered:
+        peak_ror_idx = bt_ror_filtered.index(max_ror)
+        peak_ror_time = times_min[peak_ror_idx]
+        ax2.plot(peak_ror_time, max_ror, 'r*', markersize=15, zorder=5)
+        ax2.annotate(f'Peak: {max_ror:.1f}°F/min', 
+                   xy=(peak_ror_time, max_ror),
+                   xytext=(10, 10), textcoords='offset points',
+                   fontsize=9, color='red', fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                           edgecolor='red', alpha=0.8),
+                   arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
+    
+    # Add phase markers to RoR plot with RoR value annotations
+    for event_key, temp_key, name, color in phase_events:
         event_time = computed.get(event_key, 0)
         if event_time > 0:
             event_time_min = event_time / 60
             if event_time_min <= times_min[-1]:
+                # Find closest index for this time
+                event_idx = min(range(len(times_min)), 
+                              key=lambda i: abs(times_min[i] - event_time_min))
+                event_ror = bt_ror_filtered[event_idx]
+                
                 ax2.axvline(x=event_time_min, color=color, linestyle='--', 
                            linewidth=1.5, alpha=0.7)
+                
+                # Add RoR value annotation at the event point
+                if event_ror > 0:  # Only show if RoR is meaningful
+                    ax2.annotate(f'{event_ror:.1f}°F/min', 
+                               xy=(event_time_min, event_ror),
+                               xytext=(5, 5), textcoords='offset points',
+                               fontsize=8, color=color, fontweight='bold',
+                               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                       edgecolor=color, alpha=0.7))
     
     # Add special events to RoR plot
     if specialevents and specialevents_strings:
@@ -301,6 +338,25 @@ def render_alog(data, output_path, dpi=150):
         metadata_text.append(f'Total Time: {total_time/60:.1f} min')
     if development_pct > 0:
         metadata_text.append(f'Development: {development_pct:.1f}%')
+    
+    # Add phase durations and percentages
+    phase_durations = computed.get('phase_durations_s', {})
+    phase_percentages = computed.get('phase_percentages', {})
+    
+    drying_duration = phase_durations.get('drying', 0)
+    maillard_duration = phase_durations.get('maillard', 0)
+    dev_duration = phase_durations.get('development', 0)
+    
+    drying_pct = phase_percentages.get('drying', 0)
+    maillard_pct = phase_percentages.get('maillard', 0)
+    dev_pct = phase_percentages.get('development', 0)
+    
+    if drying_duration > 0:
+        metadata_text.append(f'Drying: {drying_duration}s ({drying_pct:.1f}%)')
+    if maillard_duration > 0:
+        metadata_text.append(f'Maillard: {maillard_duration}s ({maillard_pct:.1f}%)')
+    if dev_duration > 0:
+        metadata_text.append(f'Dev: {dev_duration}s ({dev_pct:.1f}%)')
     
     if metadata_text:
         fig.text(0.99, 0.01, '\n'.join(metadata_text), 
