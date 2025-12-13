@@ -16,13 +16,14 @@ runs:
     
     - name: Install dependencies
       shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
       run: |
-        pip install matplotlib>=3.5.0
+        # Install the package from the action directory
+        pip install -e "${ACTION_PATH}"
     
     - name: Process alog files
       shell: bash
-      env:
-        ACTION_PATH: ${{ github.action_path }}
       run: |
         mkdir -p renders
         
@@ -46,14 +47,19 @@ runs:
             # Extract batch number
             batch_name=$(python3 -c "import ast; data = ast.literal_eval(open('$alog').read()); print(f\"{data.get('roastbatchprefix', '#')}{data.get('roastbatchnr', 0)}\")" 2>/dev/null || echo "unknown")
             
-            # Render profile
-            python3 "${ACTION_PATH}/alog_renderer.py" "$alog" -o "renders/${batch_name}.png"
+            # Render profile using installed CLI
+            alog-to-image "$alog" -o "renders/${batch_name}.png"
             
             # Update roast log if it exists
             if [ -f "roasts.md" ]; then
               # Build raw GitHub content URL
               REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/${{ github.ref_name }}"
-              python3 "${ACTION_PATH}/update_roast_log.py" "$alog" "renders/${batch_name}.png" --repo-url "$REPO_URL"
+              python3 -c "
+import sys
+sys.path.insert(0, '${{ github.action_path }}')
+from update_roast_log import parse_alog, extract_metadata, update_roast_log
+update_roast_log('$alog', 'renders/${batch_name}.png', 'roasts.md', '$REPO_URL')
+"
             fi
             
             echo "✓ Processed: $batch_name"

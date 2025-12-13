@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alog-to-image"
+version = "1.0.0"
+description = "Convert Artisan roaster .alog files to beautiful PNG visualizations"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [
+    {name = "John Mills", email = "jmillsy@users.noreply.github.com"}
+]
+keywords = ["coffee", "roasting", "artisan", "visualization", "alog"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Multimedia :: Graphics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "matplotlib>=3.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/jmillsy/alog-to-image"
+Repository = "https://github.com/jmillsy/alog-to-image"
+Issues = "https://github.com/jmillsy/alog-to-image/issues"
+
+[project.scripts]
+alog-to-image = "alog_to_image.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["alog_to_image*"]
+exclude = ["tests*", "example*"]

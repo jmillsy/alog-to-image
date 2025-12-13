@@ -1,200 +1,269 @@
-# ALOG to Image Renderer
-
-[![Render ALOG Files](https://github.com/YOUR_USERNAME/alog-to-image/actions/workflows/render.yml/badge.svg)](https://github.com/YOUR_USERNAME/alog-to-image/actions/workflows/render.yml)
+# ALOG to Image
 
 Convert Artisan roaster `.alog` files into beautiful PNG visualizations showing temperature curves and rate of rise (RoR).
+
+[![PyPI version](https://badge.fury.io/py/alog-to-image.svg)](https://badge.fury.io/py/alog-to-image)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 
 - 📊 Renders Bean Temperature (BT) and Environment Temperature (ET) curves
-- 📈 Calculates and displays Rate of Rise (RoR) 
-- 🎯 Shows roast phases: DRY END, First Crack Start (FCs), First Crack End (FCe), DROP
-- 📝 Includes roast metadata: beans, roaster type, weight loss
-- 🤖 Automated rendering via GitHub Actions
+- 📈 Calculates and displays Rate of Rise (RoR) with peak detection
+- 🎯 Shows roast phases: CHARGE, TP, DRY END, First Crack (FCs/FCe), DROP
+- 🏷️ Temperature annotations directly on curves at each event
+- 📊 RoR values displayed at key roasting phases
+- 📝 Includes metadata: beans, roaster, weight loss, phase durations
+- 🤖 Works as CLI tool, Python library, or GitHub Action
 - 🎨 High-quality output with customizable DPI
 
 ## Installation
 
+### As a Python Package (Recommended)
+
 ```bash
-# Clone the repository
-git clone <your-repo-url>
+pip install alog-to-image
+```
+
+### From Source
+
+```bash
+git clone https://github.com/jmillsy/alog-to-image.git
 cd alog-to-image
-
-# Install dependencies
-pip install -r requirements.txt
+pip install -e .
 ```
 
-## CLI Usage
+## Usage
 
-### Basic Usage
-
-Render an alog file to PNG (output will be named same as input with .png extension):
+### Command Line Interface
 
 ```bash
-python alog_renderer.py example/#28_25-11-28_1654.alog
+# Basic usage - output will be input_name.png
+alog-to-image roast.alog
+
+# Specify output path
+alog-to-image roast.alog -o output/my_roast.png
+
+# High-resolution output
+alog-to-image roast.alog --dpi 300
 ```
 
-### Specify Output Path
+### Python API
+
+```python
+from alog_to_image import parse_alog, render_alog
+
+# Parse and render
+data = parse_alog('roast.alog')
+render_alog(data, 'output.png', dpi=150)
+```
+
+### TypeScript/Node.js Integration
+
+Install the package globally or in your project:
 
 ```bash
-python alog_renderer.py input.alog -o output/my_roast.png
+pip install alog-to-image
 ```
 
-### Custom DPI
+Then use it via subprocess:
+
+```typescript
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+async function renderAlog(inputPath: string, outputPath: string) {
+  try {
+    const { stdout, stderr } = await execAsync(
+      `alog-to-image "${inputPath}" -o "${outputPath}"`
+    );
+    console.log(stdout);
+    return outputPath;
+  } catch (error) {
+    console.error('Error rendering alog:', error);
+    throw error;
+  }
+}
+
+// Usage
+await renderAlog('roast.alog', 'output.png');
+```
+
+Or create a reusable wrapper:
+
+```typescript
+class AlogRenderer {
+  async render(
+    inputPath: string, 
+    outputPath: string, 
+    options: { dpi?: number } = {}
+  ): Promise<string> {
+    const dpiFlag = options.dpi ? `--dpi ${options.dpi}` : '';
+    const command = `alog-to-image "${inputPath}" -o "${outputPath}" ${dpiFlag}`;
+    
+    const { stdout } = await execAsync(command);
+    console.log(stdout);
+    return outputPath;
+  }
+}
+
+// Usage
+const renderer = new AlogRenderer();
+await renderer.render('roast.alog', 'output.png', { dpi: 300 });
+```
+
+### GitHub Action
+
+Use as a reusable action in your repository:
+
+```yaml
+name: Render Alog Files
+
+on:
+  push:
+    paths:
+      - '**.alog'
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - uses: jmillsy/alog-to-image@v1
+```
+
+The action will automatically:
+- Detect changed `.alog` files
+- Render them to `renders/#<batch>.png`
+- Update `roasts.md` with embedded images
+- Commit the changes
+
+## Output Example
+
+The generated image includes:
+
+**Temperature Chart (Top)**
+- Bean Temperature (BT) and Environment Temperature (ET) curves
+- Vertical markers for key events (CHARGE, TP, DRY, FCs, FCe, DROP)
+- Temperature annotations directly on the BT curve at each event
+- Special event markers (gas changes, etc.)
+
+**Rate of Rise Chart (Bottom)**
+- RoR curve showing heating rate over time
+- Peak RoR highlighted with value
+- RoR values displayed at each phase marker
+- Same event markers as temperature chart
+
+**Metadata Box**
+- Bean origin and roaster type
+- Weight in/out and loss percentage
+- Total roast time and development percentage
+- Phase durations (drying, maillard, development)
+
+## Development
+
+### Setup Development Environment
 
 ```bash
-python alog_renderer.py input.alog --dpi 300
+git clone https://github.com/jmillsy/alog-to-image.git
+cd alog-to-image
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -e ".[dev]"
 ```
 
-### Update Roast Log
-
-Manually update the roast log with a new entry:
+### Run Tests
 
 ```bash
-python update_roast_log.py input.alog renders/#28.png
+# Test CLI
+alog-to-image example/#28_25-11-28_1654.alog -o test.png
+
+# Test Python API
+python -c "from alog_to_image import parse_alog, render_alog; \
+           data = parse_alog('example/#28_25-11-28_1654.alog'); \
+           render_alog(data, 'test.png')"
 ```
 
-### Full Options
+### Build Package
 
 ```bash
-python alog_renderer.py --help
+pip install build
+python -m build
 ```
 
-Output:
-```
-usage: alog_renderer.py [-h] [-o OUTPUT] [--dpi DPI] input
+This creates distribution files in `dist/`:
+- `alog_to_image-1.0.0-py3-none-any.whl` (wheel)
+- `alog-to-image-1.0.0.tar.gz` (source)
 
-Render Artisan roaster .alog files to PNG images
+### Publish to PyPI
 
-positional arguments:
-  input                 Path to the input .alog file
-
-options:
-  -h, --help            show this help message and exit
-  -o OUTPUT, --output OUTPUT
-                        Path for the output PNG file (default: input_name.png)
-  --dpi DPI             DPI for output image (default: 150)
+```bash
+pip install twine
+twine upload dist/*
 ```
 
-## Using in Your Own Repository
+## API Reference
 
-This tool is designed to be used in your personal roast log repository. Here's how to set it up:
+### `parse_alog(filepath)`
 
-### 1. Copy the Workflow
+Parse an .alog file and return the data dictionary.
 
-Copy `.github/workflows/render.yml` to your roast repository's `.github/workflows/` folder.
+**Parameters:**
+- `filepath` (str): Path to the .alog file
 
-### 2. Copy the Scripts
+**Returns:**
+- `dict`: Parsed alog data
 
-Copy these files to your roast repository:
-- `alog_renderer.py`
-- `update_roast_log.py`
-- `requirements.txt`
+**Raises:**
+- `ValueError`: If file cannot be parsed
 
-### 3. Initialize Your Roast Log
+### `calculate_ror(times, temps, window=30)`
 
-Create an empty `ROASTS.md` file in your repository:
+Calculate Rate of Rise for temperature data.
 
-```markdown
-# Roast Log
+**Parameters:**
+- `times` (list): Time values in seconds
+- `temps` (list): Temperature values
+- `window` (int): Time window for RoR calculation in seconds (default: 30)
 
-A chronological log of all coffee roasts.
+**Returns:**
+- `list`: RoR values in degrees per minute
 
-```
+### `render_alog(data, output_path, dpi=150)`
 
-### 4. Add Your First Roast
+Render alog data to a PNG image.
 
-1. Add your `.alog` file to the repository
-2. Commit and push to GitHub
-3. The workflow will automatically:
-   - Render the profile to `renders/#<batch>.png`
-   - Extract metadata and append to `ROASTS.md`
-   - Commit the changes back to your repository
+**Parameters:**
+- `data` (dict): Parsed alog data
+- `output_path` (str): Path for output PNG
+- `dpi` (int): Image resolution (default: 150)
 
-### Workflow Behavior
-
-- **On push**: Only processes new or modified `.alog` files
-- **Manual trigger**: Processes all `.alog` files in the repository
-- **Auto-commits**: Uses `[skip ci]` to prevent infinite loops
-- **Duplicate protection**: Skips roasts already in `ROASTS.md`
-
-### Example Roast Log Output
-
-Your `ROASTS.md` will look like this:
-
-```markdown
-# Roast Log
-
-A chronological log of all coffee roasts.
-
-| Roast | Date | Time | Dev % | Profile |
-|-------|------|------|-------|----------|
-| #28 | Fri Nov 28 2025 | 10.1 min | 11.3% | ![Profile](renders/#28.png) |
-| #27 | Thu Nov 27 2025 | 9.5 min | 12.1% | ![Profile](renders/#27.png) |
-```
-
-Roasts are sorted newest first (descending by date).
-
-## About ALOG Files
-
-ALOG files are generated by [Artisan](https://artisan-scope.org/), an open-source software for coffee roasters. The files are Python dictionaries containing:
-
-- Time series data (`timex`, `temp1`, `temp2`)
-- Roast metadata (beans, roaster, dates, weights)
-- Event markers (CHARGE, TP, DRY, FCs, FCe, DROP)
-- Extra sensor data (exhaust temp, ambient temp)
-
-## How It Works
-
-1. **Parse**: Uses `ast.literal_eval()` to safely parse the Python dictionary
-2. **Extract**: Pulls time series data for temperatures (BT, ET)
-3. **Calculate**: Computes Rate of Rise using a 30-second rolling window
-4. **Visualize**: Creates dual-panel plot with matplotlib
-5. **Save**: Exports to PNG with metadata overlay
-
-## Example Output
-
-The rendered image includes:
-- Upper panel: Temperature curves (BT in blue, ET in red)
-- Lower panel: Rate of Rise curve (green)
-- Vertical markers for roast phases (DRY, FCs, FCe, DROP)
-- Metadata box with beans, roaster, and weight information
+**Raises:**
+- `ValueError`: If no valid temperature data found
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.8+
 - matplotlib >= 3.5.0
 
 ## License
 
-MIT License - feel free to use and modify as needed.
+MIT License - see [LICENSE](LICENSE) file for details
 
 ## Contributing
 
-Contributions welcome! Some ideas:
+Contributions welcome! Please feel free to submit a Pull Request.
 
-- Add support for different temperature units (Celsius)
-- Include additional sensor data visualization
-- Add RoR for ET curve
-- Export to other formats (SVG, PDF)
-- Interactive plots with plotly
+## Credits
 
-## Troubleshooting
+Created by [John Mills](https://github.com/jmillsy)
 
-### "Error parsing alog file"
-
-Make sure your `.alog` file is a valid Python dictionary. You can test by running:
-
-```python
-import ast
-with open('your_file.alog', 'r') as f:
-    data = ast.literal_eval(f.read())
-```
-
-### "No valid temperature data found"
-
-Check that your alog file contains `timex`, `temp1`, and `temp2` keys with valid data (not all `-1.0` values).
-
-### GitHub Actions not running
-
-Ensure the workflow file is in `.github/workflows/render.yml` and you've committed/pushed it to your repository.
+For use with [Artisan Roaster Software](https://github.com/artisan-roaster-scope/artisan)
