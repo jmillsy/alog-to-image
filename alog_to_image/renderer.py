@@ -545,3 +545,145 @@ def render_alog(data, output_path, dpi=150, source_filename=None):
     plt.tight_layout(rect=[0, 0.20, 1, 0.96])
     plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
     plt.close()
+
+
+def extract_roast_stats(data, filename=None):
+    """
+    Extract roast statistics from parsed alog data.
+    
+    Args:
+        data: Dictionary containing parsed alog data
+        filename: Optional source filename
+        
+    Returns:
+        Dictionary containing roast statistics in a structured format
+    """
+    computed = data.get('computed', {})
+    timex = data.get('timex', [])
+    
+    # Extract basic metadata
+    stats = {
+        'file': filename,
+        'title': data.get('title', 'Unknown'),
+        'roast_date': data.get('roastdate', ''),
+        'beans': data.get('beans', ''),
+        'roaster': data.get('roastertype', ''),
+        'weight': {
+            'in': data.get('weight', [0, 0, 'g'])[0],
+            'out': data.get('weight', [0, 0, 'g'])[1],
+            'unit': data.get('weight', [0, 0, 'g'])[2],
+            'loss_percent': 0
+        },
+        'total_time_seconds': computed.get('totaltime', 0),
+        'total_time_formatted': '',
+        'phases': {},
+        'events': [],
+        'gas_changes': []
+    }
+    
+    # Calculate weight loss
+    weight_in = stats['weight']['in']
+    weight_out = stats['weight']['out']
+    if weight_in > 0 and weight_out > 0:
+        stats['weight']['loss_percent'] = round(((weight_in - weight_out) / weight_in) * 100, 1)
+    
+    # Format total time
+    total_time = stats['total_time_seconds']
+    if total_time > 0:
+        stats['total_time_formatted'] = f"{int(total_time // 60)}:{int(total_time % 60):02d}"
+    
+    # Extract phase information
+    phase_durations = computed.get('phase_durations_s', {})
+    phase_percentages = computed.get('phase_percentages', {})
+    
+    for phase_name in ['drying', 'maillard', 'development']:
+        duration = phase_durations.get(phase_name, 0)
+        percentage = phase_percentages.get(phase_name, 0)
+        stats['phases'][phase_name] = {
+            'duration_seconds': duration,
+            'duration_formatted': f"{int(duration // 60)}:{int(duration % 60):02d}" if duration > 0 else "0:00",
+            'percentage': round(percentage, 1)
+        }
+    
+    # Extract events with times and temperatures
+    timeindex = data.get('timeindex', [])
+    specialeventsvalue = data.get('specialeventsvalue', [])
+    
+    # Get charge time for relative calculations
+    charge_time = 0
+    if timeindex and len(timeindex) > 0 and timeindex[0] > 0:
+        charge_idx = timeindex[0]
+        if charge_idx < len(timex):
+            charge_time = timex[charge_idx]
+    
+    # Infer charge gas
+    charge_gas = "Unknown"
+    if specialeventsvalue and len(specialeventsvalue) > 0:
+        gas_value = specialeventsvalue[0]
+        if gas_value < 1.3:
+            charge_gas = "5"
+        elif gas_value < 1.8:
+            charge_gas = "10"
+        elif gas_value < 2.3:
+            charge_gas = "15"
+        elif gas_value < 2.8:
+            charge_gas = "20"
+        elif gas_value < 3.3:
+            charge_gas = "25"
+        elif gas_value < 3.8:
+            charge_gas = "30"
+        else:
+            charge_gas = "35+"
+    
+    # Add charge event
+    charge_bt = computed.get('CHARGE_BT', 0)
+    stats['events'].append({
+        'name': 'CHARGE',
+        'time_seconds': 0,
+        'time_formatted': '0:00',
+        'temperature_f': round(charge_bt, 1) if charge_bt > 0 else None,
+        'gas_mbar': charge_gas
+    })
+    
+    # Add roast phase events
+    event_list = [
+        ('TP_time', 'TP', 'TP_BT'),
+        ('DRY_time', 'DRY_END', 'DRY_END_BT'),
+        ('FCs_time', 'FCs', 'FCs_BT'),
+        ('FCe_time', 'FCe', 'FCe_BT'),
+        ('DROP_time', 'DROP', 'DROP_BT')
+    ]
+    
+    for event_key, event_name, temp_key in event_list:
+        event_time = computed.get(event_key, 0)
+        if event_time > 0:
+            rel_time = event_time - charge_time
+            event_temp = computed.get(temp_key, 0)
+            stats['events'].append({
+                'name': event_name,
+                'time_seconds': int(rel_time),
+                'time_formatted': f"{int(rel_time // 60)}:{int(rel_time % 60):02d}",
+                'temperature_f': round(event_temp, 1) if event_temp > 0 else None
+            })
+    
+    # Extract gas changes
+    specialevents = data.get('specialevents', [])
+    specialeventsStrings = data.get('specialeventsStrings', [])
+    
+    for i, event_idx in enumerate(specialevents):
+        if event_idx < len(timex) and i < len(specialeventsStrings):
+            gas_label = specialeventsStrings[i]
+            if gas_label and gas_label.strip():
+                event_time = timex[event_idx]
+                rel_time = event_time - charge_time
+                stats['gas_changes'].append({
+                    'time_seconds': int(rel_time),
+                    'time_formatted': f"{int(rel_time // 60)}:{int(rel_time % 60):02d}",
+                    'gas_mbar': gas_label
+                })
+    
+    # Sort events chronologically
+    stats['events'].sort(key=lambda x: x['time_seconds'])
+    stats['gas_changes'].sort(key=lambda x: x['time_seconds'])
+    
+    return stats

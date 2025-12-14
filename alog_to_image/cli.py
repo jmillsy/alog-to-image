@@ -3,9 +3,10 @@ Command-line interface for alog-to-image.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
-from .renderer import parse_alog, render_alog
+from .renderer import parse_alog, render_alog, extract_roast_stats
 
 
 def main():
@@ -32,6 +33,18 @@ def main():
         help='DPI for output image (default: 150)'
     )
     parser.add_argument(
+        '--json',
+        action='store_true',
+        default=False,
+        help='Output roast statistics in JSON format'
+    )
+    parser.add_argument(
+        '--json-only',
+        action='store_true',
+        default=False,
+        help='Only output JSON statistics without rendering image'
+    )
+    parser.add_argument(
         '--version',
         action='version',
         version='%(prog)s 1.0.0'
@@ -56,9 +69,17 @@ def main():
         print(f"Parsing alog file: {input_path}")
         data = parse_alog(input_path)
         
-        print(f"Rendering to: {output_path}")
-        render_alog(data, output_path, dpi=args.dpi, source_filename=input_path.name)
-        print(f"Rendered image saved to: {output_path}")
+        # Render image unless --json-only
+        if not args.json_only:
+            print(f"Rendering to: {output_path}")
+            render_alog(data, output_path, dpi=args.dpi, source_filename=input_path.name)
+            print(f"Rendered image saved to: {output_path}")
+        
+        # Output JSON if requested
+        if args.json or args.json_only:
+            stats = extract_roast_stats(data, input_path.name)
+            print("\nRoast Statistics (JSON):")
+            print(json.dumps(stats, indent=2))
         
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
