@@ -488,11 +488,35 @@ def render_alog(data, output_path, dpi=150, source_filename=None):
     # Add gas changes
     for i, event_idx in enumerate(specialevents):
         if event_idx < len(timex) and i < len(specialeventsStrings):
-            gas_label = specialeventsStrings[i]
-            if gas_label and gas_label.strip():
+            label = specialeventsStrings[i]
+            if label and label.strip():
                 event_time = timex[event_idx]
                 rel_time = event_time - charge_time
-                timeline_events.append((rel_time, f"Gas → {gas_label}mbar"))
+                
+                # Try to parse the value to determine if it's gas or airflow
+                # Airflow is typically 2.0-3.0 (or 20-30 after mapping)
+                # Gas is typically 2-35 mbar
+                try:
+                    value = float(label)
+                    # If value is in range 1.5-10 and looks like airflow pattern
+                    if 1.5 <= value <= 10:
+                        # Could be airflow (2.0, 2.5, 2.75, 3.0) or mapped (20, 25, 30)
+                        if value >= 15:
+                            # Likely mapped airflow value (20, 25, 30)
+                            airflow_display = value / 10  # Convert back to 2.0, 2.5, 3.0
+                            timeline_events.append((rel_time, f"Airflow → {airflow_display:.1f}"))
+                        elif value < 4:
+                            # Likely unmapped airflow (2.0, 2.5, 2.75, 3.0)
+                            timeline_events.append((rel_time, f"Airflow → {value:.2f}"))
+                        else:
+                            # Ambiguous, treat as gas
+                            timeline_events.append((rel_time, f"Gas → {label}mbar"))
+                    else:
+                        # Standard gas value
+                        timeline_events.append((rel_time, f"Gas → {label}mbar"))
+                except ValueError:
+                    # Not a number, just display as-is
+                    timeline_events.append((rel_time, f"Gas → {label}mbar"))
     
     # Sort chronologically
     timeline_events.sort(key=lambda x: x[0])
@@ -666,24 +690,63 @@ def extract_roast_stats(data, filename=None):
                 'temperature_f': round(event_temp, 1) if event_temp > 0 else None
             })
     
-    # Extract gas changes
+    # Extract gas changes and airflow changes
     specialevents = data.get('specialevents', [])
     specialeventsStrings = data.get('specialeventsStrings', [])
+    stats['airflow_changes'] = []  # Add separate airflow array
     
     for i, event_idx in enumerate(specialevents):
         if event_idx < len(timex) and i < len(specialeventsStrings):
-            gas_label = specialeventsStrings[i]
-            if gas_label and gas_label.strip():
+            label = specialeventsStrings[i]
+            if label and label.strip():
                 event_time = timex[event_idx]
                 rel_time = event_time - charge_time
-                stats['gas_changes'].append({
-                    'time_seconds': int(rel_time),
-                    'time_formatted': f"{int(rel_time // 60)}:{int(rel_time % 60):02d}",
-                    'gas_mbar': gas_label
-                })
+                
+                # Try to parse the value to determine if it's gas or airflow
+                try:
+                    value = float(label)
+                    # Airflow detection: values 1.5-10
+                    if 1.5 <= value <= 10:
+                        if value >= 15:
+                            # Mapped airflow value (20, 25, 30) -> convert to (2.0, 2.5, 3.0)
+                            airflow_display = value / 10
+                            stats['airflow_changes'].append({
+                                'time_seconds': int(rel_time),
+                                'time_formatted': f"{int(rel_time // 60)}:{int(rel_time % 60):02d}",
+                                'airflow': round(airflow_display, 2)
+                            })
+                        elif value < 4:
+                            # Unmapped airflow (2.0, 2.5, 2.75, 3.0)
+                            stats['airflow_changes'].append({
+                                'time_seconds': int(rel_time),
+                                'time_formatted': f"{int(rel_time // 60)}:{int(rel_time % 60):02d}",
+                                'airflow': round(value, 2)
+                            })
+                        else:
+                            # Ambiguous, treat as gas
+                            stats['gas_changes'].append({
+                                'time_seconds': int(rel_time),
+                                'time_formatted': f"{int(rel_time // 60)}:{int(rel_time % 60):02d}",
+                                'gas_mbar': label
+                            })
+                    else:
+                        # Standard gas value
+                        stats['gas_changes'].append({
+                            'time_seconds': int(rel_time),
+                            'time_formatted': f"{int(rel_time // 60)}:{int(rel_time % 60):02d}",
+                            'gas_mbar': label
+                        })
+                except ValueError:
+                    # Not a number, treat as gas
+                    stats['gas_changes'].append({
+                        'time_seconds': int(rel_time),
+                        'time_formatted': f"{int(rel_time // 60)}:{int(rel_time % 60):02d}",
+                        'gas_mbar': label
+                    })
     
-    # Sort events chronologically
+    # Sort changes chronologically
     stats['events'].sort(key=lambda x: x['time_seconds'])
     stats['gas_changes'].sort(key=lambda x: x['time_seconds'])
+    stats['airflow_changes'].sort(key=lambda x: x['time_seconds'])
     
     return stats
