@@ -35,8 +35,14 @@ def main():
     parser.add_argument(
         '--json',
         action='store_true',
+        default=True,
+        help='Output roast statistics in JSON format (default: enabled, use --no-json to disable)'
+    )
+    parser.add_argument(
+        '--no-json',
+        action='store_true',
         default=False,
-        help='Output roast statistics in JSON format'
+        help='Disable JSON statistics output'
     )
     parser.add_argument(
         '--json-only',
@@ -75,8 +81,8 @@ def main():
             render_alog(data, output_path, dpi=args.dpi, source_filename=input_path.name)
             print(f"Rendered image saved to: {output_path}")
         
-        # Output JSON if requested
-        if args.json or args.json_only:
+        # Output JSON if requested (default True unless --no-json is set)
+        if (args.json and not args.no_json) or args.json_only:
             stats = extract_roast_stats(data, input_path.name)
             print("\nRoast Statistics (JSON):")
             print(json.dumps(stats, indent=2))
