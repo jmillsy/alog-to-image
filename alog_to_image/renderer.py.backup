@@ -1,16 +1,11 @@
-#!/usr/bin/env python3
 """
-ALOG File Renderer
-Converts Artisan roaster .alog files to PNG images with temperature and RoR curves.
+Core rendering logic for ALOG files.
 """
 
-import argparse
 import ast
 import sys
 from pathlib import Path
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from datetime import datetime, timedelta
 
 
 def parse_alog(filepath):
@@ -22,6 +17,9 @@ def parse_alog(filepath):
         
     Returns:
         Dictionary containing roast data
+        
+    Raises:
+        ValueError: If file cannot be parsed
     """
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -30,8 +28,7 @@ def parse_alog(filepath):
         data = ast.literal_eval(content)
         return data
     except (SyntaxError, ValueError) as e:
-        print(f"Error parsing alog file: {e}", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"Error parsing alog file: {e}")
 
 
 def calculate_ror(times, temps, window=30):
@@ -77,7 +74,7 @@ def calculate_ror(times, temps, window=30):
     return ror
 
 
-def render_alog(data, output_path, dpi=150):
+def render_alog(data, output_path, dpi=150, source_filename=None):
     """
     Render the alog data to a PNG image.
     
@@ -85,15 +82,35 @@ def render_alog(data, output_path, dpi=150):
         data: Dictionary containing parsed alog data
         output_path: Path where PNG should be saved
         dpi: DPI for output image (default 150)
+        source_filename: Optional filename to display on the image
+        
+    Raises:
+        ValueError: If no valid temperature data found
     """
     # Extract time series data
     timex = data.get('timex', [])
     temp1 = data.get('temp1', [])
     temp2 = data.get('temp2', [])
     
+    # Get DROP time to filter out post-roast data
+    computed = data.get('computed', {})
+    drop_time = computed.get('DROP_time', 0)  # Time in seconds
+    
+    # Find DROP index to cut off data after DROP
+    drop_idx = len(timex)  # Default to end if no DROP found
+    if drop_time > 0:
+        for i, t in enumerate(timex):
+            if t >= drop_time:
+                drop_idx = i + 1  # Include DROP point itself
+                break
+    
+    # Truncate all data at DROP to avoid post-roast noise
+    timex = timex[:drop_idx]
+    temp1 = temp1[:drop_idx]
+    temp2 = temp2[:drop_idx]
+    
     # Detect which temp is BT vs ET based on computed data
     # BT typically drops when beans are charged, ET stays higher
-    computed = data.get('computed', {})
     charge_bt = computed.get('CHARGE_BT')
     charge_et = computed.get('CHARGE_ET')
     
@@ -143,8 +160,7 @@ def render_alog(data, output_path, dpi=150):
             valid_data.append((timex[i], bt, et))
     
     if not valid_data:
-        print("No valid temperature data found in alog file", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError("No valid temperature data found in alog file")
     
     # Unpack valid data
     times, bt_temps, et_temps = zip(*valid_data)
@@ -190,6 +206,14 @@ def render_alog(data, output_path, dpi=150):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
     fig.suptitle(f'{roast_title} - {roast_date}', fontsize=16, fontweight='bold')
     
+    # Add filename in top-left corner if provided
+    if source_filename:
+        fig.text(0.01, 0.99, f'File: {source_filename}', 
+                ha='left', va='top', fontsize=8, 
+                style='italic', color='gray',
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
+                         edgecolor='lightgray', alpha=0.7))
+    
     # Plot 1: Temperature curves
     ax1.plot(times_min, bt_temps, 'b-', linewidth=2, label='BT (Bean Temp)')
     ax1.plot(times_min, et_temps, 'r-', linewidth=2, label='ET (Env Temp)')
@@ -197,6 +221,55 @@ def render_alog(data, output_path, dpi=150):
     ax1.set_ylabel('Temperature (°F)', fontsize=12)
     ax1.set_title('Temperature Profile', fontsize=14)
     ax1.grid(True, alpha=0.3)
+    
+    # Add phase
+    # Get phase times and percentages
+    dry_end_time = computed.get('DRY_time', 0)
+    fcs_time = computed.get('FCs_time', 0)
+    drop_time = computed.get('DROP_time', 0)
+    
+    phase_percentages = computed.get('phase_percentages', {})
+    drying_pct = phase_percentages.get('drying', 0)
+    maillard_pct = phase_percentages.get('maillard', 0)
+    dev_pct = phase_percentages.get('development', 0)
+    
+    # Get y-axis limits for positioning phase bars
+    y_min, y_max = ax1.get_ylim()
+    phase_bar_height = (y_max - y_min) * 0.04  # 4% of plot height
+    phase_bar_y = y_max - phase_bar_height * 0.5  # Position at top
+    
+    # Convert times to minutes
+    dry_end_min = dry_end_time / 60 if dry_end_time > 0 else 0
+    fcs_min = fcs_time / 60 if fcs_time > 0 else 0
+    drop_min = drop_time / 60 if drop_time > 0 else times_min[-1]
+    
+    # Draw phase bars with percentages
+    if dry_end_min > 0:
+        # Drying phase (CHARGE to DRY END)
+        drying_width = dry_end_min
+        ax1.barh(phase_bar_y, drying_width, height=phase_bar_height, 
+                left=0, color='orange', alpha=0.3, edgecolor='orange', linewidth=1.5)
+        if drying_pct > 0:
+            ax1.text(drying_width / 2, phase_bar_y, f'Drying\n{drying_pct:.1f}%', 
+                    ha='center', va='center', fontsize=9, fontweight='bold', color='darkorange')
+    
+    if fcs_min > dry_end_min > 0:
+        # Maillard phase (DRY END to FCs)
+        maillard_width = fcs_min - dry_end_min
+        ax1.barh(phase_bar_y, maillard_width, height=phase_bar_height, 
+                left=dry_end_min, color='brown', alpha=0.3, edgecolor='brown', linewidth=1.5)
+        if maillard_pct > 0:
+            ax1.text(dry_end_min + maillard_width / 2, phase_bar_y, f'Maillard\n{maillard_pct:.1f}%', 
+                    ha='center', va='center', fontsize=9, fontweight='bold', color='saddlebrown')
+    
+    if drop_min > fcs_min > 0:
+        # Development phase (FCs to DROP)
+        dev_width = drop_min - fcs_min
+        ax1.barh(phase_bar_y, dev_width, height=phase_bar_height, 
+                left=fcs_min, color='green', alpha=0.3, edgecolor='green', linewidth=1.5)
+        if dev_pct > 0:
+            ax1.text(fcs_min + dev_width / 2, phase_bar_y, f'Development\n{dev_pct:.1f}%', 
+                    ha='center', va='center', fontsize=9, fontweight='bold', color='darkgreen')
     
     # Add CHARGE marker with temperature annotation
     charge_bt = computed.get('CHARGE_BT', 0)
@@ -251,7 +324,22 @@ def render_alog(data, output_path, dpi=150):
                                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                        edgecolor=color, alpha=0.7))
     
-    ax1.legend(loc='upper left', fontsize=9, ncol=2)
+    # Add special events to temperature plot
+    if specialevents and specialevents_strings:
+        for i, event_idx in enumerate(specialevents):
+            if 0 <= event_idx < len(times_min) and i < len(specialevents_strings):
+                event_label = specialevents_strings[i]
+                if event_label and event_label.strip():  # Only show if there's a label
+                    # Add small annotation
+                    ax1.annotate(event_label, 
+                               xy=(times_min[event_idx], ax1.get_ylim()[1] * 0.95),
+                               xytext=(0, -5), textcoords='offset points',
+                               ha='center', fontsize=8, color='blue',
+                               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', 
+                                       edgecolor='blue', alpha=0.3))
+    
+    # Move legend outside plot area (to the right)
+    ax1.legend(loc='upper left', fontsize=9, ncol=1, bbox_to_anchor=(1.01, 1), borderaxespad=0)
     
     # Plot 2: Rate of Rise (RoR)
     ax2.plot(times_min, bt_ror_filtered, 'g-', linewidth=2, label='BT RoR')
@@ -261,7 +349,8 @@ def render_alog(data, output_path, dpi=150):
     ax2.set_ylabel('Rate of Rise (°F/min)', fontsize=12)
     ax2.set_title('Rate of Rise', fontsize=14)
     ax2.grid(True, alpha=0.3)
-    ax2.legend(loc='upper right', fontsize=10)
+    # Move legend outside plot area (to the right)
+    ax2.legend(loc='upper left', fontsize=10, bbox_to_anchor=(1.01, 1), borderaxespad=0)
     
     # Set Y-axis minimum to 0 to better show the gradual decline
     # Calculate max RoR for upper bound with some padding
@@ -366,54 +455,4 @@ def render_alog(data, output_path, dpi=150):
     # Adjust layout and save
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
-    print(f"Rendered image saved to: {output_path}")
     plt.close()
-
-
-def main():
-    """Main entry point for the CLI."""
-    parser = argparse.ArgumentParser(
-        description='Render Artisan roaster .alog files to PNG images'
-    )
-    parser.add_argument(
-        'input',
-        type=str,
-        help='Path to the input .alog file'
-    )
-    parser.add_argument(
-        '-o', '--output',
-        type=str,
-        default=None,
-        help='Path for the output PNG file (default: input_name.png)'
-    )
-    parser.add_argument(
-        '--dpi',
-        type=int,
-        default=150,
-        help='DPI for output image (default: 150)'
-    )
-    
-    args = parser.parse_args()
-    
-    # Validate input file
-    input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"Error: Input file not found: {args.input}", file=sys.stderr)
-        sys.exit(1)
-    
-    # Determine output path
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        output_path = input_path.with_suffix('.png')
-    
-    # Parse and render
-    print(f"Parsing alog file: {input_path}")
-    data = parse_alog(input_path)
-    
-    print(f"Rendering to: {output_path}")
-    render_alog(data, output_path, dpi=args.dpi)
-
-
-if __name__ == '__main__':
-    main()
